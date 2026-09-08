@@ -1,6 +1,6 @@
 -- Augmented Vector Space — Kähler Extension v2
 -- No dependencies — runs on play.haskell.org (base only)
--- Compile: ghc -O Main.hs -o avs-kahler
+-- Compile: ghc -O kahler_isco.hs -o kahler_isco
 
 module Main where
 
