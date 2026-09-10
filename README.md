@@ -1,145 +1,188 @@
-# kerr-black-hole
+# AVS Kähler — Signal Manifold Analysis
 
-Analysis of Kerr black hole geodesic trajectories using signal geometry tools, with an X3D visualisation.
+## NASA Ancillary Software Compliance
 
-Each Boyer-Lindquist coordinate — t(λ), r(λ), θ(λ), φ(λ) — is treated as a scalar time series and fed through two companion tools: the [AVS Ground Tool](https://github.com/subunits/avsp) for augmented vector space analysis, and the [AVS Kähler Extension](https://github.com/subunits/kahler-ts) for Hermitian geometry and persistent homology.
+**Software Type:** Ancillary — Research
+**Classification:** Open Source
+**Export Control:** EAR99 — No export restrictions apply
+**Safety Critical:** No
+**TRL:** 2 (Technology concept and/or application formulated)
+**Language:** Haskell (GHC 9.x)
+**Dependencies:** `base` only (no third-party packages)
+**Platform:** Any platform with GHC; tested via [play.haskell.org](https://play.haskell.org)
+**Companion project:** avs (Augmented Vector Space Ground Tool)
 
----
+## Abstract
 
-## Black hole parameters
+This software extends the Augmented Vector Space (AVS) framework into the domain of complex differential geometry. Each augmented time series vector in R^n is complexified by pairing consecutive lag dimensions into coordinates in C^(n/2). The resulting complex vector space admits a Hermitian inner product H = g + iω, where g is the Riemannian metric (recovering the original L2 distance) and ω is a symplectic 2-form encoding the phase relationships between lag dimensions. The software verifies the Kähler conditions on the complexified corpus, measures the curvature of the embedded signal manifold via discrete evaluation of dω, computes a Chern number proxy across all six built-in signal generators, and runs a Vietoris-Rips persistent homology filtration over the Hermitian distance to extract Betti numbers H0 and H1. The tool is intended for research into the topological and geometric structure of time series data and requires familiarity with Hermitian geometry and algebraic topology.
 
-| Parameter | Value |
-|---|---|
-| Spin a/M | 0.7 |
-| ISCO radius | 3.3931 M |
-| Geodesic energy E | 0.8964 |
-| Angular momentum L | 2.5865 |
-| Samples | 300 (affine step h = 0.5) |
-| Units | G = c = M = 1 |
+## Version History
 
----
+| Version | Date | Author | Description |
+|---------|------|--------|-------------|
+| 1.0.0 | 2026-09-05 | (see Point of Contact) | Initial release: complexification, Kähler checks, curvature, Chern proxy, persistent homology |
 
-## Files
+## 1. Mathematical Background
 
-    kerr_isco.py            RK4 Kerr geodesic integrator — generates trajectory CSVs
-    isco_all.csv            All four coordinates combined (300 samples)
-    isco_r_coord.csv        Radial coordinate r(λ) — input to Augmented Vector Space Ground Tool
-    isco_t_coord.csv        Coordinate time t(λ) — input to Augmented Vector Space Ground Tool
-    isco_theta_coord.csv    Polar angle θ(λ) — input to Augmented Vector Space Ground Tool
-    isco_phi_coord.csv      Azimuthal angle φ(λ) — input to Augmented Vector Space Ground Tool
-    avsp/Main.hs            Augmented Vector Space Ground Tool — kNN, OLS, anomaly detection
-    kahler_isco.hs          AVS Kähler Extension — ISCO signal corpus
-    black_hole_soft.x3d     Pure X3D 3.3 scene — softened Kerr black hole (a/M = 0.7)
-    README.md               This file
+### 1.1 Prerequisites
 
----
+The reader is assumed to be familiar with the following:
 
-## Requirements
+- Real and complex inner product spaces
+- Riemannian geometry (metric tensor, geodesics)
+- Symplectic geometry (symplectic form, Lagrangian submanifolds)
+- Kähler manifolds (Hermitian manifolds with closed symplectic form)
+- Basic algebraic topology (homology groups, Betti numbers)
+- Persistent homology and the Vietoris-Rips filtration
 
-- Python 3 — stdlib only (`math`, `csv`)
-- GHC 9.x — `base` only, no Cabal or Stack required
+### 1.2 From AVS to Kähler
 
----
+The AVS ground tool constructs an augmented vector v(t) in R^n for each time step t by concatenating lag features, finite differences, and rolling statistics. This is a flat real vector space with the standard L2 metric.
 
-## Step 1 — Generate trajectory data
+The Kähler extension proceeds in three steps.
 
-    python3 kerr_isco.py
+First, complexification. Consecutive lag pairs (lag_{2k}, lag_{2k+1}) are identified with the real and imaginary parts of a complex coordinate z_k = lag_{2k} + i·lag_{2k+1}. Derivative and rolling statistic dimensions are embedded as purely real complex numbers. The result is a point in C^m where m = ceil(p/2) + d + 2, and p, d are the lag window and derivative order respectively.
 
-Writes to the current directory:
+Second, the Hermitian inner product. The standard Hermitian form H(u,v) = Σ conj(u_i)·v_i decomposes as H = g + iω where g(u,v) = Re H(u,v) is the Riemannian metric and ω(u,v) = Im H(u,v) is the symplectic 2-form. Since Re H(v,v) = Σ |v_i|² = ‖v‖², the Riemannian metric exactly recovers the original L2 norm. The complexification preserves the metric.
 
-    isco_t_coord.csv        Coordinate time t(λ)
-    isco_r_coord.csv        Radial coordinate r(λ)
-    isco_theta_coord.csv    Polar angle θ(λ)
-    isco_phi_coord.csv      Azimuthal angle φ(λ)
-    isco_all.csv            All four coordinates combined
+Third, the complex structure. The map J: C^m → C^m defined by J(z) = iz acts as a 90-degree rotation in each complex plane. It satisfies J² = -I, g(Ju,Jv) = g(u,v), and the compatibility condition ω(u,v) = g(Ju,v). Together with the closedness of ω (dω = 0 on the flat C^m), these conditions define a Kähler manifold. The flat space C^m with the standard Hermitian metric is the simplest example of a Kähler manifold.
 
----
+### 1.3 Embedded Signal Manifold
 
-## Step 2 — AVS Ground Tool
+The augmented points {v(t)} trace out a curve (or low-dimensional manifold) embedded in C^m. This embedded manifold is generally not flat even though the ambient C^m is. The discrete exterior derivative dω evaluated on triples of consecutive signal points measures the local curvature of the embedding. Specifically, dω(p,q,r) = ω(q-p,r-p) + ω(r-q,p-q) + ω(p-r,q-r). For a flat embedding this vanishes; non-zero values quantify how far the signal manifold deviates from a Lagrangian submanifold of C^m.
 
-Clone [avsp](https://github.com/subunits/avsp) and compile:
+### 1.4 Chern Number Proxy
 
-    ghc -O Main.hs -o avsp
+The Chern number of a complex vector bundle is a topological invariant computed as the integral of the curvature 2-form over the base manifold. The discrete proxy computed here, Σ_{i<j} ω(p_i,p_j), approximates this integral over the corpus of augmented points. For signals with monotone phase progression (sine wave) this sum is large because ω accumulates without cancellation. For chaotic signals whose trajectories cross themselves in lag space (logistic map, random walk) partial cancellation reduces the net integral.
 
-Feed each coordinate CSV into the ground tool:
+### 1.5 Persistent Homology
 
-    LANG=C.UTF-8 ./avsp isco_r_coord.csv
-    LANG=C.UTF-8 ./avsp isco_t_coord.csv
-    LANG=C.UTF-8 ./avsp isco_theta_coord.csv
-    LANG=C.UTF-8 ./avsp isco_phi_coord.csv
+The Vietoris-Rips filtration builds a simplicial complex over the corpus at each distance threshold ε. Vertices are augmented points; edges connect pairs within distance ε; triangles fill triples within mutual distance ε. The Betti numbers β0 (connected components) and β1 (independent 1-cycles) track the topology of this complex as ε grows.
 
-Each run produces kNN search, OLS next-step regression, Shannon entropy per augmented dimension, anomaly detection, and pairwise distance matrices (L2 and cosine) for that coordinate signal. Output also available on [play.haskell.org](https://play.haskell.org) — paste `Main.hs` and run.
+The homology corpus consists of two guaranteed-separated clusters: 8 points from a sine wave centred at 0 and 8 points from the same sine wave DC-shifted by +10. The DC shift moves the lag vectors to a completely separate region of C^k — the inter-cluster gap is approximately 10√dim, which exceeds the maximum intra-cluster distance by construction. This guarantees β0 starts at 2 and drops to 1 cleanly as ε crosses the inter-cluster gap. Filtration steps follow sorted pairwise distances rather than uniform spacing so every topology-changing event is captured. Each step also reports the Shannon entropy of the active edge distance distribution, which rises as the complex gains structurally diverse edges. Connected components are computed via a stateless union-find over plain lists, avoiding state-threading issues while remaining correct for the corpus sizes used.
 
----
+## 2. Software Description
 
-## Step 3 — Kähler Extension
+### 2.1 Architecture
 
-Compile and run `kahler_isco.hs` directly from this repo:
+The program is a single Haskell module (Main) with the following layers. Signal generators produce raw sample sequences. The AVS augmentation layer (inherited from the companion project) constructs real augmented vectors. The complexification layer lifts these into C^m. The geometry layer computes the Hermitian metric, symplectic form, complex structure J, and curvature. The topology layer runs the Vietoris-Rips filtration and extracts Betti numbers. All results are reported to stdout.
 
-    ghc -O kahler_isco.hs -o kahler_isco
-    LANG=C.UTF-8 ./kahler_isco
+### 2.2 Key Data Types
 
-All four ISCO coordinates are embedded in `allSignals`. The primary signal `xs` is ISCO-r. Output covers Kähler condition verification, discrete curvature dω, Chern proxy comparison, symplectic form matrix, holomorphic kNN, and Vietoris-Rips persistent homology. Also runs on [play.haskell.org](https://play.haskell.org).
+| Type | Description |
+|------|-------------|
+| `C` | Complex number: `C { re :: Double, im :: Double }` |
+| `CVec` | `[C]` — a complex feature vector in C^m |
+| `AugConfig` | Augmentation hyperparameters (inherited from AVS) |
+| `AugPoint` | Real augmented point: time index + real vector |
+| `KahlerPoint` | Kähler-lifted point: time index + real vector + complex vector |
+| `Parents` | `[Int]` — stateless union-find parent array for VR connected components |
 
----
+### 2.3 Algorithms
 
-## Key results
+#### Complexification
 
-### Chern proxy — symplectic integral Σ ω(pᵢ, pⱼ)
+Consecutive lag pairs are identified as complex coordinates. Purely real dimensions (diffs, rolling stats) are embedded as C x 0. Time complexity O(n·m) where n is the number of augmented points and m is the complex dimension.
 
-| Signal | Chern proxy | vs sine (1037.38) | Physical meaning |
-|---|---|---|---|
-| sine (ref) | 1037.38 | 100% | Pure periodic baseline |
-| ISCO-θ | 987.57 | 95% | Near-sinusoidal polar oscillation, monotone phase |
-| ISCO-r | 934.59 | 90% | Oscillatory radial perturbation, monotone accumulation |
-| ISCO-φ | 512.45 | 49% | Azimuthal advance; 2π wrapping causes partial cancellation |
-| lorenz | 436.26 | 42% | Chaotic Lorenz attractor — partial ω cancellation |
-| ISCO-t | 23.56 | 2% | Linear coordinate time; near-collinear lag vectors |
+#### Hermitian inner product
 
-### Curvature dω
+H(u,v) = Σ conj(u_i)·v_i computed in O(m) per pair.
 
-All four ISCO coordinates show constant dω ≈ 0.0325 across all triples — uniform to three significant figures. The embedding is uniformly curved (not Lagrangian), consistent with a circular geodesic at fixed r_ISCO in a curved spacetime. This is the Kähler signature of orbital regularity.
+#### Kähler condition verification
 
-### Symplectic matrix (ISCO-r, first 4 points)
+Four conditions checked per consecutive pair: J²=-I, g(Ju,Jv)=g(u,v), ω skew-symmetric, ω(u,v)=g(Ju,v). All are O(m) per pair.
 
-    ω(u,v)    t=3      t=4      t=5      t=6
-    t=3       0.000   +0.440   +0.870   +1.278
-    t=4      -0.440    0.000   +0.440   +0.870
-    t=5      -0.870   -0.440    0.000   +0.440
-    t=6      -1.278   -0.870   -0.440    0.000
+#### Curvature (discrete dω)
 
-Uniform increment Δω = 0.440 per step — the orbital frequency of the ISCO encoded as symplectic phase advance in C^k.
+Evaluated on consecutive triples. O(m) per triple.
 
-### Persistent homology
+#### Chern proxy
 
-H0 drops 15 → 1 as ε grows. H1 = 0 throughout. Entropy rises monotonically 0.0 → 3.25 bits.
+O(n²·m) over the full corpus.
 
----
+#### Vietoris-Rips persistent homology
 
-## X3D scene
+Edges O(n²), triangles O(n³). Restricted to the first 12 points by default to keep runtime tractable on play.haskell.org. For larger corpora, compile locally with ghc -O.
 
-Open `black_hole_soft.x3d` in [X_ITE](https://create3000.github.io/x_ite/) (drag and drop) or Instant Reality. Cycle viewpoints with PageUp / PageDown — overview, equatorial, polar. Pure X3D 3.3, no external dependencies.
+## 3. Inputs and Outputs
 
----
+### 3.1 Inputs
 
-## Extending
+All parameters are set by editing constants in main.
 
-Edit `kerr_isco.py` to analyse other orbital regimes:
+| Parameter | Variable | Default | Description |
+|-----------|----------|---------|-------------|
+| Lag window | `lagWindow` | 4 | Number of lag dimensions (even recommended for clean pairing) |
+| Derivative order | `derivOrder` | 1 | 0, 1, or 2 |
+| Rolling window | `rollingWin` | 4 | Window for μ and σ features |
+| Signal | `xs` | `lorenzWave 60` | Input time series |
+| Homology points | `kPts12` | first 12 | Points used in VR filtration (increase carefully) |
 
-- Plunging orbit: set `r < r_isco`, remove the `eps_r` stabilisation term
-- Eccentric orbit: initialise with non-circular E and L values
-- Different spin: change `a = 0.7` — r_ISCO recomputes automatically
-- Photon sphere: set `r = 1.5 * M * (1 + sqrt(1 - a**2/M**2))` (approximate)
+Built-in signals:
 
----
+| Function | Type | Notes |
+|----------|------|-------|
+| `sineWave n` | Periodic | Near-zero Chern proxy |
+| `logisticMap n` | Chaotic | Large Chern proxy, high entropy |
+| `lorenzWave n` | Chaotic | Large curvature flux; intermediate Chern proxy |
+| `sawtoothWave n` | Quasi-periodic | Intermediate curvature |
+| `stepWave n` | Piecewise+noise | Step discontinuities visible in ω |
+| `randomWalk n` | Non-stationary | Growing norm, diffuse ω |
 
-## Companion repositories
+### 3.2 Outputs
 
-- [subunits/avsp](https://github.com/subunits/avsp) — AVS Ground Tool v3. CSV ingestion, kNN, OLS, anomaly detection. NASA ancillary software, EAR99.
-- [subunits/kahler-ts](https://github.com/subunits/kahler-ts) — AVS Kähler Extension v2. Hermitian geometry, Chern proxy, persistent homology. NASA ancillary software, EAR99, TRL 2.
+All output to stdout. No files are written (unlike the AVS ground tool). Sections produced:
 
----
+| Section | Description |
+|---------|-------------|
+| Kähler condition verification | J²=-I, metric preservation, skew-symmetry, compatibility |
+| Embedded manifold curvature | dω per triple; magnitude = local curvature flux |
+| Chern proxy comparison | All six signals ranked by discrete ω integral |
+| Symplectic form matrix | ω(p_i, p_j) for first 6 points |
+| Holomorphic 5-NN | Nearest neighbours in Hermitian distance |
+| Norm comparison | Real L2 vs Hermitian norm (ratio = 1.0 confirms correctness) |
+| Persistent homology | H0 and H1 Betti numbers across VR filtration |
 
-## Licence
+## 4. Usage
 
-Public domain — Unlicense. No warranty expressed or implied.
+### 4.1 Online
+
+Open https://play.haskell.org, paste Main.hs, press Run.
+
+### 4.2 Local
+
+```bash
+ghc -O Main.hs -o avs-kahler
+./avs-kahler
+```
+
+The homology corpus size is controlled by the `stride` function in main. Increasing the number of points raises runtime as O(n³).
+
+### 4.3 Interpreting the output
+
+The Kähler checks will always show all ✓ — the flat C^m space always satisfies these conditions. The interesting outputs are the curvature (dω on triples, non-zero for chaotic signals), the Chern proxy comparison across all six signals (sine largest, random walk smallest), and the persistent homology filtration showing H0 dropping from 15 to 1 as the two clusters merge, with entropy rising monotonically from 0.0 to ~3.25 bits.
+
+## 5. Relationship to AVS Ground Tool
+
+This project is the research extension of the AVS Ground Tool (avs). The ground tool is suitable for operational use against telemetry data: it ingests CSV files, detects anomalies, and exports results. This project is not intended for operational use. It is a mathematical workbench for studying the geometry and topology of the signal manifold.
+
+The two projects share the augmentation layer (AugConfig, augment, signal generators) but diverge at the point where the AVS ground tool applies kNN and OLS and this project applies Hermitian geometry and persistent homology.
+
+## 6. Limitations
+
+The Vietoris-Rips filtration is O(n³) in the number of triangles and is restricted to small corpora. The Chern proxy is a discrete approximation to a continuous integral and is sensitive to corpus size and signal length. The persistent homology implementation uses a simplified Euler-characteristic H1 estimator rather than a full boundary matrix reduction; it is suitable for exploratory analysis but not for publication-quality topological data analysis. The complexification pairs consecutive lag dimensions, which is natural but not unique; other pairings (e.g. by frequency content via DFT) would produce different complex structures. All checks are performed on the flat ambient C^m; the intrinsic geometry of the embedded signal manifold is only probed indirectly through dω and the VR filtration.
+
+## 7. Point of Contact
+
+| Field | Value |
+|-------|-------|
+| Author | — |
+| Organisation | — |
+| Email | — |
+| Distribution | Unlimited (EAR99) |
+
+This README was prepared in accordance with NASA NPR 2210.1C requirements for ancillary software. The software has not been subjected to NASA IV&V and is not intended for flight or safety-critical use. TRL 2 designation reflects that the mathematical concept has been formulated and demonstrated in software but has not been validated against mission data.
+
+## 8. Licence
+
+This software is released into the public domain under the Unlicense (https://unlicense.org). No warranty is expressed or implied.
