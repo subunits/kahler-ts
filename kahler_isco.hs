@@ -4,8 +4,9 @@
 
 module Main where
 
-import Data.List (sortBy, intercalate, nub, minimumBy)
-import Data.Ord  (comparing)
+import Data.Array (Array, listArray, (!), (//))
+import Data.List  (sortBy, intercalate, nub, minimumBy)
+import Data.Ord   (comparing)
 
 -- ─── Complex numbers ─────────────────────────────────────────────────────────
 
@@ -248,54 +249,120 @@ shannonEntropy xs =
         | c <- counts ]
 
 -- ─── Persistent homology (Vietoris-Rips) ─────────────────────────────────────
--- Union-find for connected components (H0)
--- Triangle closure for 1-cycles (H1 proxy)
+--
+-- Strategy:
+--   1. Build distance matrix once as Array (Int,Int) Double — O(1) lookup.
+--   2. Sort all edges once by distance — O(n² log n).
+--   3. Walk epsilon steps in order, consuming edges incrementally.
+--      State (edges, membership array, union-find, triangle count)
+--      is carried forward, never rebuilt from scratch.
+--   4. Triangle count: when a new edge (i,j) is added, count k s.t.
+--      both (i,k) and (j,k) already exist — O(n) per new edge.
+--
+-- Cost: O(n² log n + n³) spread across the filtration,
+-- vs original O(steps × n³) which rebuilt everything at every epsilon.
 
--- Simple union-find using plain lists, no state threading issues
-type Parents = [Int]
+-- Union-find with path compression using Array
+type UF = Array Int Int
 
-mkParents :: Int -> Parents
-mkParents n = [0..n-1]
+mkUF :: Int -> UF
+mkUF n = listArray (0, n-1) [0..n-1]
 
-findRoot :: Parents -> Int -> Int
-findRoot p i = if p !! i == i then i else findRoot p (p !! i)
+findUF :: UF -> Int -> (Int, UF)
+findUF uf i
+  | uf ! i == i = (i, uf)
+  | otherwise   =
+      let (root, uf') = findUF uf (uf ! i)
+      in  (root, uf' // [(i, root)])
 
-unionP :: Parents -> Int -> Int -> Parents
-unionP p a b =
-  let ra = findRoot p a
-      rb = findRoot p b
-  in  if ra == rb then p
-      else take ra p ++ [rb] ++ drop (ra+1) p
+unionUF :: UF -> Int -> Int -> UF
+unionUF uf a b =
+  let (ra, uf')  = findUF uf  a
+      (rb, uf'') = findUF uf' b
+  in  if ra == rb then uf'' else uf'' // [(ra, rb)]
 
-countComponents :: Parents -> Int -> Int
-countComponents p n =
-  length . nub $ map (findRoot p) [0..n-1]
+countComponents :: UF -> Int -> Int
+countComponents uf n =
+  length . nub $ map (fst . findUF uf) [0..n-1]
+
+-- Edge membership: Array (Int,Int) Bool, always indexed with i < j
+type EdgeArr = Array (Int,Int) Bool
+
+mkEdgeArr :: Int -> EdgeArr
+mkEdgeArr n = listArray ((0,0),(n-1,n-1)) (repeat False)
+
+hasEdge :: EdgeArr -> Int -> Int -> Bool
+hasEdge arr i j = arr ! (min i j, max i j)
+
+addEdge :: EdgeArr -> Int -> Int -> EdgeArr
+addEdge arr i j = arr // [((min i j, max i j), True)]
+
+-- mapAccumL: thread state through a list, collecting results
+mapAccumL :: (s -> a -> (s, b)) -> s -> [a] -> (s, [b])
+mapAccumL _ s []     = (s, [])
+mapAccumL f s (x:xs) =
+  let (s', b)   = f s x
+      (s'', bs) = mapAccumL f s' xs
+  in  (s'', b : bs)
 
 -- Vietoris-Rips filtration
 -- Returns [(epsilon, H0_components, H1_cycles, edge_entropy)]
 vrFiltration :: [KahlerPoint] -> Int -> [(Double,Int,Int,Double)]
 vrFiltration pts nSteps =
-  let n     = length pts
-      dists = [ [ holoDist (pts!!i) (pts!!j) | j<-[0..n-1] ] | i<-[0..n-1] ]
-      allDs    = sortBy compare
-                   [ dists!!i!!j | i<-[0..n-1], j<-[i+1..n-1] ]
-      m        = length allDs
-      idxs     = nub [ (k*(m-1)) `div` max 1 (nSteps-1) | k<-[0..nSteps-1] ]
-      epsilons = map (allDs!!) idxs
-      edges e    = [ (i,j) | i<-[0..n-1], j<-[i+1..n-1], dists!!i!!j<=e ]
-      triangles e = [ (i,j,k) | i<-[0..n-2], j<-[i+1..n-1], k<-[j+1..n-1]
-                               , dists!!i!!j<=e, dists!!i!!k<=e
-                               , dists!!j!!k<=e ]
-      h0 e =
-        let p = foldl (\acc (a,b) -> unionP acc a b) (mkParents n) (edges e)
-        in  countComponents p n
-      h1 e =
-        let es = edges e; ts = triangles e; comps = h0 e
-        in  max 0 (length es - (n - comps) - length ts)
-      edgeEntropy e =
-        let ds = [ dists!!i!!j | (i,j) <- edges e ]
-        in  shannonEntropy ds
-  in  map (\e->(e, h0 e, h1 e, edgeEntropy e)) epsilons
+  let n = length pts
+
+      -- Distance array: O(1) lookup — computed once
+      distArr :: Array (Int,Int) Double
+      distArr = listArray ((0,0),(n-1,n-1))
+                  [ holoDist (pts!!i) (pts!!j)
+                  | i <- [0..n-1], j <- [0..n-1] ]
+      d i j = distArr ! (i, j)
+
+      -- All edges sorted by distance, built once — O(n² log n)
+      sortedEdges :: [(Double,Int,Int)]
+      sortedEdges = sortBy (comparing (\(w,_,_) -> w))
+                      [ (d i j, i, j) | i <- [0..n-1], j <- [i+1..n-1] ]
+
+      -- Select nSteps epsilon values from the sorted edge list
+      m        = length sortedEdges
+      epIdxs   = nub [ (k*(m-1)) `div` max 1 (nSteps-1) | k <- [0..nSteps-1] ]
+      epsilons = map (\i -> let (w,_,_) = sortedEdges!!i in w) epIdxs
+
+      -- Incremental step: extend state to cover all edges <= eps
+      step :: ([(Double,Int,Int)], [(Int,Int)], EdgeArr, UF, Int)
+           -> Double
+           -> ( ([(Double,Int,Int)], [(Int,Int)], EdgeArr, UF, Int)
+              , (Double,Int,Int,Double) )
+      step (remaining, curEdges, eArr, uf, triCount) eps =
+        let (batch, rest) = span (\(w,_,_) -> w <= eps) remaining
+
+            newTrisFor i j =
+              length [ () | k <- [0..n-1]
+                          , k /= i, k /= j
+                          , hasEdge eArr (min i k) (max i k)
+                          , hasEdge eArr (min j k) (max j k) ]
+
+            addOne (es, earr, u, tc) (_, i, j) =
+              ( (i,j) : es
+              , addEdge earr i j
+              , unionUF u i j
+              , tc + newTrisFor i j )
+
+            (curEdges', eArr', uf', triCount') =
+              foldl addOne (curEdges, eArr, uf, triCount) batch
+
+            h0  = countComponents uf' n
+            nE  = length curEdges'
+            h1  = max 0 (nE - (n - h0) - triCount')
+            ent = shannonEntropy [ d i j | (i,j) <- curEdges' ]
+
+        in  ( (rest, curEdges', eArr', uf', triCount')
+            , (eps, h0, h1, ent) )
+
+      initState = (sortedEdges, [], mkEdgeArr n, mkUF n, 0)
+      (_, results) = mapAccumL step initState epsilons
+
+  in  results
 
 -- ─── Pretty printing ─────────────────────────────────────────────────────────
 
